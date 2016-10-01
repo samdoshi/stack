@@ -673,9 +673,9 @@ benchmarkFiles bench = do
   where
     exposed =
         case benchmarkInterface bench of
-            BenchmarkExeV10 _ fp -> [DotCabalMain fp]
-            BenchmarkUnsupported _ -> []
-    bnames = map DotCabalModule (otherModules build)
+            BenchmarkExeV10 _ fp -> S.singleton (DotCabalMain fp)
+            BenchmarkUnsupported _ -> S.empty
+    bnames = S.fromList (map DotCabalModule (otherModules build))
     build = benchmarkBuildInfo bench
 
 -- | Get all files referenced by the test.
@@ -697,10 +697,10 @@ testFiles test = do
   where
     exposed =
         case testInterface test of
-            TestSuiteExeV10 _ fp -> [DotCabalMain fp]
-            TestSuiteLibV09 _ mn -> [DotCabalModule mn]
-            TestSuiteUnsupported _ -> []
-    bnames = map DotCabalModule (otherModules build)
+            TestSuiteExeV10 _ fp -> S.singleton (DotCabalMain fp)
+            TestSuiteLibV09 _ mn -> S.singleton (DotCabalModule mn)
+            TestSuiteUnsupported _ -> S.empty
+    bnames = S.fromList (map DotCabalModule (otherModules build))
     build = testBuildInfo test
 
 -- | Get all files referenced by the executable.
@@ -715,8 +715,8 @@ executableFiles exe = do
         resolveFilesAndDeps
             (Just $ exeName exe)
             (dirs ++ [dir])
-            (map DotCabalModule (otherModules build) ++
-             [DotCabalMain (modulePath exe)])
+            (S.fromList (map DotCabalModule (otherModules build)) <>
+             S.singleton (DotCabalMain (modulePath exe)))
             haskellModuleExts
     cfiles <- buildOtherSources build
     return (modules, files <> cfiles, warnings)
@@ -734,14 +734,14 @@ libraryFiles lib = do
         resolveFilesAndDeps
             Nothing
             (dirs ++ [dir])
-            (names <> exposed)
+            names
             haskellModuleExts
     cfiles <- buildOtherSources build
     return (modules, files <> cfiles, warnings)
   where
-    names = bnames ++ exposed
-    exposed = map DotCabalModule (exposedModules lib)
-    bnames = map DotCabalModule (otherModules build)
+    names = bnames <> exposed
+    exposed = S.fromList (map DotCabalModule (exposedModules lib))
+    bnames = S.fromList (map DotCabalModule (otherModules build))
     build = libBuildInfo lib
 
 -- | Get all C sources and extra source files in a build.
@@ -892,11 +892,11 @@ resolveFilesAndDeps
     :: (MonadIO m, MonadLogger m, MonadCatch m, MonadReader (Path Abs File, Path Abs Dir) m)
     => Maybe String         -- ^ Package component name
     -> [Path Abs Dir]       -- ^ Directories to look in.
-    -> [DotCabalDescriptor] -- ^ Base names.
+    -> Set DotCabalDescriptor -- ^ Base names.
     -> [Text]               -- ^ Extensions.
     -> m (Set ModuleName,Set DotCabalPath,[PackageWarning])
 resolveFilesAndDeps component dirs names0 exts = do
-    (dotCabalPaths, foundModules, missingModules) <- loop names0 S.empty
+    (dotCabalPaths, foundModules, missingModules) <- loop (S.toList names0) S.empty
     warnings <- liftM2 (++) (warnUnlisted foundModules) (warnMissing missingModules)
     return (foundModules, dotCabalPaths, warnings)
   where
@@ -931,7 +931,7 @@ resolveFilesAndDeps component dirs names0 exts = do
     warnUnlisted foundModules = do
         let unlistedModules =
                 foundModules `S.difference`
-                S.fromList (mapMaybe dotCabalModule names0)
+                S.fromList (mapMaybe dotCabalModule (S.toList names0))
         return $
             if S.null unlistedModules
                 then []
@@ -1024,7 +1024,7 @@ resolveFiles
     -> [DotCabalDescriptor] -- ^ Base names.
     -> [Text] -- ^ Extensions.
     -> m [(DotCabalDescriptor, Maybe DotCabalPath)]
-resolveFiles dirs names exts =
+resolveFiles dirs names exts = do
     forM names (\name -> liftM (name, ) (findCandidate dirs exts name))
 
 -- | Find a candidate for the given module-or-filename from the list
